@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>fin-intel-agent 管理台</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #171e2e; --panel2: #1d2638; --line: #2a3550;
+    --txt: #dfe6f3; --muted: #8b96ad; --acc: #4c8dff; --ok: #3ecf8e; --warn: #f5b642; --err: #ff5d5d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--txt); font: 14px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif; }
+  header {
+    display: flex; align-items: center; gap: 16px; padding: 12px 24px;
+    background: linear-gradient(90deg, #1a2440, #171e2e); border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 18px; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  header .spacer { flex: 1; }
+  .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  .dot-on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot-off { background: var(--muted); }
+  nav { display: flex; gap: 4px; padding: 10px 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  nav button {
+    border: 0; background: transparent; color: var(--muted); padding: 8px 16px; border-radius: 8px;
+    cursor: pointer; font-size: 14px;
+  }
+  nav button.active { background: var(--acc); color: #fff; }
+  main { padding: 20px 24px; max-width: 1200px; margin: 0 auto; }
+  .page { display: none; }
+  .page.active { display: block; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 20px; margin-bottom: 18px; }
+  .panel h2 { font-size: 15px; margin-bottom: 12px; color: #c9d4ea; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .kv { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .kv .k { color: var(--muted); font-size: 12px; }
+  .kv .v { font-size: 15px; font-weight: 600; margin-top: 2px; word-break: break-all; }
+  .btn {
+    border: 1px solid var(--line); background: var(--panel2); color: var(--txt); border-radius: 8px;
+    padding: 8px 16px; cursor: pointer; font-size: 14px; transition: .15s;
+  }
+  .btn:hover { border-color: var(--acc); }
+  .btn.primary { background: var(--acc); border-color: var(--acc); color: #fff; }
+  .btn.ok { background: var(--ok); border-color: var(--ok); color: #06281a; }
+  .btn.warn { background: var(--warn); border-color: var(--warn); color: #2b1c00; }
+  .btn.danger { background: var(--err); border-color: var(--err); color: #2b0505; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .table th, .table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .table th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+  .table tr:hover td { background: rgba(76,141,255,.06); }
+  pre, textarea {
+    background: #0b101c; color: #cfe3ff; border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px; font-family: Consolas, "Courier New", monospace; font-size: 13px;
+  }
+  pre { white-space: pre-wrap; word-break: break-word; max-height: 70vh; overflow: auto; }
+  textarea { width: 100%; min-height: 46vh; resize: vertical; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 12px; margin-right: 6px; }
+  .tag.pm { background: #24436e; color: #8fc0ff; }
+  .tag.am { background: #5c2d3a; color: #ff9db3; }
+  .tag.skipped { background: #3a3540; color: #b8b0c9; }
+  .msg { margin: 10px 0; padding: 10px 14px; border-radius: 8px; display: none; font-size: 13px; }
+  .msg.show { display: block; }
+  .msg.ok { background: rgba(62,207,142,.12); border: 1px solid var(--ok); color: var(--ok); }
+  .msg.err { background: rgba(255,93,93,.12); border: 1px solid var(--err); color: var(--err); }
+  .msg.warn { background: rgba(245,182,66,.12); border: 1px solid var(--warn); color: var(--warn); }
+  .empty { color: var(--muted); padding: 20px; text-align: center; }
+  a.link { color: var(--acc); cursor: pointer; text-decoration: none; }
+  a.link:hover { text-decoration: underline; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--line); border-top-color:var(--acc); border-radius:50%; animation:spin .8s linear infinite; vertical-align:-2px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .flex { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .grow { flex: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>fin-intel-agent 管理台</h1>
+  <span class="sub" id="ver"></span>
+  <span class="spacer"></span>
+  <span><span class="status-dot" id="sched-dot"></span>调度器 <b id="sched-state">-</b></span>
+</header>
+<nav>
+  <button data-page="overview" class="active">概览</button>
+  <button data-page="reports">最近报告</button>
+  <button data-page="config">配置</button>
+  <button data-page="records">推送记录</button>
+  <button data-page="logs">运行日志</button>
+</nav>
+
+<main>
+  <!-- ===================== 概览 ===================== -->
+  <section class="page active" id="page-overview">
+    <div class="panel">
+      <h2>调度器</h2>
+      <div class="btn-row">
+        <button class="btn ok" id="btn-start">启动</button>
+        <button class="btn warn" id="btn-pause">暂停</button>
+        <button class="btn" id="btn-resume">恢复</button>
+        <button class="btn danger" id="btn-stop">停止</button>
+      </div>
+      <div class="msg" id="sched-msg"></div>
+      <div style="margin-top:14px">
+        <table class="table">
+          <thead><tr><th>Job ID</th><th>名称</th><th>触发</th><th>下次运行</th><th>状态</th></tr></thead>
+          <tbody id="jobs-body"><tr><td colspan="5" class="empty">调度器未启动</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>手动触发报告</h2>
+      <div class="flex">
+        <select id="trigger-kind" class="btn" style="padding:8px 10px">
+          <option value="premarket">盘前 (premarket)</option>
+          <option value="aftermarket" selected>盘后 (aftermarket)</option>
+        </select>
+        <label class="muted"><input type="checkbox" id="trigger-dry"> 强制 dry-run(不推送)</label>
+        <button class="btn primary" id="btn-trigger">立即触发</button>
+        <span id="trigger-status"></span>
+      </div>
+      <div class="msg" id="trigger-msg"></div>
+      <div id="last-manual" style="margin-top:10px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>运行概览</h2>
+      <div class="grid" id="overview-grid"></div>
+    </div>
+  </section>
+
+  <!-- ===================== 最近报告 ===================== -->
+  <section class="page" id="page-reports">
+    <div class="panel">
+      <h2>报告存档 <span class="muted">(data/reports,按时间倒序)</span></h2>
+      <div class="flex" style="margin-bottom:10px">
+        <select id="report-kind" class="btn" style="padding:8px 10px">
+          <option value="">全部</option>
+          <option value="premarket">盘前</option>
+          <option value="aftermarket">盘后</option>
+        </select>
+        <button class="btn" id="btn-refresh-reports">刷新</button>
+      </div>
+      <div id="report-list"></div>
+    </div>
+    <div class="panel" id="report-detail-panel" style="display:none">
+      <h2>报告全文 <span class="muted" id="report-detail-name"></span></h2>
+      <pre id="report-detail"></pre>
+    </div>
+  </section>
+
+  <!-- ===================== 配置 ===================== -->
+  <section class="page" id="page-config">
+    <div class="panel">
+      <h2>当前生效配置 <span class="muted">(webhook 已脱敏)</span></h2>
+      <div class="msg warn" id="cfg-env-note"></div>
+      <div class="grid" id="cfg-meta"></div>
+    </div>
+    <div class="panel">
+      <h2>在线编辑 (写回 config/config.yaml 并热重载)</h2>
+      <div class="flex" style="margin-bottom:10px">
+        <label class="muted">飞书 webhook(留空保持不变;此处输入则覆盖):</label>
+        <input type="text" id="webhook-input" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/... " style="flex:1;min-width:300px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#0b101c;color:var(--txt)">
+      </div>
+      <textarea id="config-editor" spellcheck="false"></textarea>
+      <div class="flex" style="margin-top:12px">
+        <button class="btn primary" id="btn-save-config">保存并热重载</button>
+        <button class="btn" id="btn-reload-config">放弃修改 / 重新读取</button>
+        <span id="cfg-current-path" class="muted"></span>
+      </div>
+      <div class="msg" id="config-msg"></div>
+    </div>
+  </section>
+
+  <!-- ===================== 推送记录 ===================== -->
+  <section class="page" id="page-records">
+    <div class="panel">
+      <h2>推送/触发记录 <span class="muted">(data/push_records.jsonl)</span></h2>
+      <button class="btn" id="btn-refresh-records" style="margin-bottom:10px">刷新</button>
+      <div id="records-list"></div>
+    </div>
+  </section>
+
+  <!-- ===================== 日志 ===================== -->
+  <section class="page" id="page-logs">
+    <div class="panel">
+      <h2>运行日志尾部 <span class="muted" id="log-path"></span></h2>
+      <div class="flex" style="margin-bottom:10px">
+        <select id="log-lines" class="btn" style="padding:8px 10px">
+          <option value="100">100 行</option>
+          <option value="300" selected>300 行</option>
+          <option value="800">800 行</option>
+        </select>
+        <button class="btn" id="btn-refresh-logs">刷新</button>
+        <label class="muted"><input type="checkbox" id="log-auto" checked> 自动刷新(5s)</label>
+      </div>
+      <pre id="log-view">加载中...</pre>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let currentTab = 'overview';
+
+// ---------- 导航 ----------
+document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
+  currentTab = b.dataset.page;
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('active', x === b));
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + currentTab));
+  if (currentTab === 'reports') loadReports();
+  if (currentTab === 'config') loadConfig();
+  if (currentTab === 'records') loadRecords();
+  if (currentTab === 'logs') loadLogs();
+  if (currentTab === 'overview') loadStatus();
+}));
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, opts);
+  const ct = r.headers.get('content-type') || '';
+  const body = ct.includes('json') ? await r.json() : await r.text();
+  if (!r.ok) throw new Error(typeof body === 'string' ? body : (body.detail || r.statusText));
+  return body;
+}
+function showMsg(id, text, type = 'ok') {
+  const el = $(id);
+  el.className = 'msg show ' + type;
+  el.textContent = text;
+  setTimeout(() => el.classList.remove('show'), 8000);
+}
+
+// ---------- 状态 ----------
+async function loadStatus() {
+  try {
+    const s = await api('/api/status');
+    $('ver').textContent = 'v' + s.version;
+    $('sched-state').textContent = s.scheduler_running ? '运行中' : '已停止';
+    $('sched-dot').className = 'status-dot ' + (s.scheduler_running ? 'dot-on' : 'dot-off');
+    const tb = $('jobs-body');
+    if (!s.jobs || !s.jobs.length) tb.innerHTML = '<tr><td colspan="5" class="empty">调度器未启动</td></tr>';
+    else tb.innerHTML = s.jobs.map(j =>
+      `<tr><td>${j.id}</td><td>${j.name}</td><td class="muted">${esc(j.trigger)}</td><td>${j.next_run_time || '-'}</td><td>${j.paused ? '<span class="tag" style="background:#5c2d3a;color:#ff9db3">已暂停</span>' : '<span class="tag" style="background:#0f3a26;color:#3ecf8e">运行中</span>'}</td></tr>`).join('');
+    const grid = $('overview-grid');
+    grid.innerHTML = [
+      ['生效 dry_run', s.effective_dry_run ? '是(不推送)' : '否'],
+      ['webhook', s.webhook_set ? '已配置' : '未配置(空)'],
+      ['动态排行榜池', s.ranked_pool_enabled ? '启用' : '停用(旧watchlist)'],
+      ['时区', s.timezone],
+      ['盘前 cron', s.premarket_cron],
+      ['盘后 cron', s.aftermarket_cron],
+    ].map(([k, v]) => `<div class="kv"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  } catch (e) { showMsg('sched-msg', '状态加载失败: ' + e.message, 'err'); }
+}
+
+// ---------- 调度 ----------
+function schedAction(action, btn) {
+  btn.disabled = true;
+  api('/api/scheduler/' + action, { method: 'POST' })
+    .then(r => { showMsg('sched-msg', r.message || action, 'ok'); loadStatus(); })
+    .catch(e => showMsg('sched-msg', '操作失败: ' + e.message, 'err'))
+    .finally(() => { btn.disabled = false; });
+}
+$('btn-start').onclick = e => schedAction('start', e.target);
+$('btn-pause').onclick = e => schedAction('pause', e.target);
+$('btn-resume').onclick = e => schedAction('resume', e.target);
+$('btn-stop').onclick = e => schedAction('stop', e.target);
+
+// ---------- 手动触发 ----------
+$('btn-trigger').onclick = async function () {
+  const kind = $('trigger-kind').value, dry = $('trigger-dry').checked;
+  const btn = this; btn.disabled = true;
+  $('trigger-status').innerHTML = '<span class="spinner"></span> 后台执行中(采集较慢,可切到概览等待)...';
+  try {
+    const r = await api('/api/trigger', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, dry_run: dry })
+    });
+    showMsg('trigger-msg', r.message, 'ok');
+    // 轮询执行结果
+    pollTriggerResult();
+  } catch (e) { showMsg('trigger-msg', '触发失败: ' + e.message, 'err'); btn.disabled = false; }
+};
+async function pollTriggerResult() {
+  const seen = {};
+  const iv = setInterval(async () => {
+    try {
+      const s = await api('/api/trigger/status');
+      $('trigger-status').innerHTML = s.running ? '<span class="spinner"></span> 后台执行中...' : '';
+      if (!s.running && s.last) {
+        clearInterval(iv);
+        $('btn-trigger').disabled = false;
+        renderLastManual(s.last);
+        if (currentTab === 'reports') loadReports();
+      }
+    } catch (e) { clearInterval(iv); $('btn-trigger').disabled = false; }
+  }, 2000);
+  // 上限保护:60s 后停轮询(触发仍会在后台继续)
+  setTimeout(() => { clearInterval(iv); $('btn-trigger').disabled = false; }, 120000);
+}
+function renderLastManual(m) {
+  const box = $('last-manual');
+  if (!m.ok) {
+    box.innerHTML = `<div class="kv"><div class="k">最近一次手动触发</div><div class="v" style="color:var(--err)">失败: ${esc(m.error)}</div><div class="k">${m.finished_at}</div></div>`;
+    return;
+  }
+  const r = m.result || {};
+  const tag = r.kind === 'premarket' ? 'pm' : 'am';
+  const state = r.skipped ? '<span class="tag skipped">已跳过</span>' : (r.pushed ? '<span class="tag" style="background:#0f3a26;color:#3ecf8e">已推送</span>' : '<span class="tag warn">dry-run未推送</span>');
+  box.innerHTML = `
+    <div class="kv">
+      <div class="k">最近一次手动触发 (${m.finished_at})</div>
+      <div class="v">${state} <span class="tag ${tag}">${r.kind === 'premarket' ? '盘前' : '盘后'}</span> ${r.message || ''}</div>
+      <div class="k">${r.dry_run ? 'dry_run 生效' : ''} ${r.chunks ? '分片 ' + r.chunks + ' / 失败 ' + r.failed : ''} ${r.report_rel ? '存档: ' + esc(r.report_rel) : ''}</div>
+    </div>`;
+}
+
+// ---------- 报告 ----------
+async function loadReports() {
+  const kind = $('report-kind').value;
+  try {
+    const d = await api('/api/reports?limit=50' + (kind ? '&kind=' + kind : ''));
+    const list = $('report-list');
+    if (!d.reports.length) { list.innerHTML = '<div class="empty">暂无存档报告,可先到概览手动触发一轮</div>'; return; }
+    list.innerHTML = '<table class="table"><thead><tr><th>类型</th><th>日期</th><th>文件</th><th>大小</th><th>时间</th><th></th></tr></thead><tbody>' +
+      d.reports.map(r => `<tr>
+        <td><span class="tag ${r.kind === 'premarket' ? 'pm' : 'am'}">${r.kind === 'premarket' ? '盘前' : '盘后'}</span></td>
+        <td>${r.date}</td><td class="muted">${esc(r.name)}</td><td>${r.size} B</td><td class="muted">${r.mtime}</td>
+        <td><a class="link" onclick="viewReport('${esc(r.rel_path)}')">查看全文</a></td>
+      </tr>`).join('') + '</tbody></table>';
+  } catch (e) { $('report-list').innerHTML = '<div class="empty">加载失败: ' + esc(e.message) + '</div>'; }
+}
+async function viewReport(rel) {
+  try {
+    const text = await api('/api/reports/read?path=' + encodeURIComponent(rel));
+    $('report-detail-panel').style.display = '';
+    $('report-detail-name').textContent = rel;
+    $('report-detail').textContent = text;
+    $('report-detail-panel').scrollIntoView({ behavior: 'smooth' });
+  } catch (e) { showMsg('trigger-msg', '读取报告失败: ' + e.message, 'err'); }
+}
+$('btn-refresh-reports').onclick = loadReports;
+$('report-kind').onchange = loadReports;
+
+// ---------- 配置 ----------
+async function loadConfig() {
+  try {
+    const c = await api('/api/config');
+    $('cfg-current-path').textContent = '配置文件: ' + c.config_path;
+    $('cfg-env-note').textContent = c.env_note;
+    $('config-editor').value = c.yaml_text;
+    $('cfg-meta').innerHTML = [
+      ['webhook', c.webhook_set ? c.webhook : '未配置(空)'],
+      ['生效 dry_run', c.effective_dry_run ? '是(不推送)' : '否'],
+      ['配置路径', c.config_path],
+    ].map(([k, v]) => `<div class="kv"><div class="k">${k}</div><div class="v">${esc(v)}</div></div>`).join('');
+  } catch (e) { showMsg('config-msg', '配置加载失败: ' + e.message, 'err'); }
+}
+$('btn-save-config').onclick = async function () {
+  const btn = this; btn.disabled = true;
+  try {
+    const r = await api('/api/config', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: $('config-editor').value, webhook_url: $('webhook-input').value.trim() })
+    });
+    showMsg('config-msg', r.message, 'ok');
+    $('webhook-input').value = '';
+    await loadConfig(); loadStatus();
+  } catch (e) { showMsg('config-msg', '保存失败: ' + e.message, 'err'); }
+  finally { btn.disabled = false; }
+};
+$('btn-reload-config').onclick = () => { $('webhook-input').value = ''; loadConfig(); };
+
+// ---------- 推送记录 ----------
+async function loadRecords() {
+  try {
+    const d = await api('/api/push-records?limit=100');
+    const list = $('records-list');
+    if (!d.records.length) { list.innerHTML = '<div class="empty">暂无推送/触发记录</div>'; return; }
+    list.innerHTML = '<table class="table"><thead><tr><th>时间</th><th>来源</th><th>类型</th><th>状态</th><th>结果</th><th>存档</th></tr></thead><tbody>' +
+      d.records.map(r => {
+        const kindTag = r.kind === 'premarket' ? '<span class="tag pm">盘前</span>' : '<span class="tag am">盘后</span>';
+        let stateTxt = r.skipped ? '<span class="tag skipped">跳过(' + esc(r.reason || '') + ')</span>'
+          : (r.pushed ? '<span class="tag" style="background:#0f3a26;color:#3ecf8e">已推送</span>'
+             : (r.dry_run ? '<span class="tag warn">dry-run</span>' : '<span class="tag" style="background:#5c2d3a;color:#ff9db3">未推送</span>'));
+        return `<tr>
+          <td class="muted">${r.ts}</td><td>${r.source || '-'}</td><td>${kindTag}</td><td>${stateTxt}</td>
+          <td class="muted">${r.skipped ? '-' : ((r.message || '') + (r.chunks ? ` (${r.chunks}片/失败${r.failed})` : ''))}</td>
+          <td>${r.report_rel ? `<a class="link" onclick="viewReport('${esc(r.report_rel)}')">查看</a>` : '-'}</td>
+        </tr>`;
+      }).join('') + '</tbody></table>';
+  } catch (e) { $('records-list').innerHTML = '<div class="empty">加载失败: ' + esc(e.message) + '</div>'; }
+}
+$('btn-refresh-records').onclick = loadRecords;
+
+// ---------- 日志 ----------
+async function loadLogs() {
+  try {
+    const d = await api('/api/logs?lines=' + $('log-lines').value);
+    $('log-path').textContent = d.path || '';
+    $('log-view').textContent = d.lines && d.lines.length ? d.lines.join('\n') : '(日志为空)';
+    const el = $('log-view'); el.scrollTop = el.scrollHeight;
+  } catch (e) { $('log-view').textContent = '加载失败: ' + e.message; }
+}
+$('btn-refresh-logs').onclick = loadLogs;
+$('log-lines').onchange = loadLogs;
+setInterval(() => { if ($('log-auto').checked && currentTab === 'logs') loadLogs(); }, 5000);
+
+// ---------- 工具 ----------
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+
+// ---------- 初始化 ----------
+loadStatus();
+setInterval(() => { if (currentTab === 'overview') loadStatus(); }, 8000);
+</script>
+</body>
+</html>

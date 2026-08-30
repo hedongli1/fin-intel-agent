@@ -1,0 +1,21 @@
+# fin-intel-agent systemd 服务(示例)
+# 安装: 复制本文件到 /etc/systemd/system/ 后 systemctl daemon-reload && systemctl enable --now fin-intel-agent
+# 注意: 将 WorkingDirectory / ExecStart 调整为你的实际部署路径
+[Unit]
+Description=fin-intel-agent - A股企业情报定时监控 Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/fin-intel-agent
+ExecStart=/usr/bin/python3 -m src.fin_intel
+Restart=always
+RestartSec=5
+Environment=TZ=Asia/Shanghai
+# 建议用专属低权限用户运行(按需取消注释)
+# User=finintel
+# Group=finintel
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,57 @@
+# ============================================================
+#  fin-intel-agent 配置
+#  动态排行榜监控池 + 五维深采集 Agent
+#  监控对象:成交额/涨幅/换手率/量比/总市值 五榜前列股票并集去重(默认每榜前 20)
+#  除 feishu.webhook_url 外,其余字段均有合理默认值
+# ============================================================
+
+# ---- 定时调度 ----
+schedule:
+  timezone: Asia/Shanghai                # 时区,影响 cron 与"今天"的日期计算
+  premarket_cron: "30 9 * * 1-5"       # 盘前报告: 每交易日 09:30 (分 时 日 月 周)
+  aftermarket_cron: "30 15 * * 1-5"    # 盘后报告: 每交易日 15:30
+  # 盘中实时监控可自行把 cron 调密,例如每10分钟:  */10 9-15 * * 1-5
+  skip_non_trading_days: true            # true = 非交易日(周末/节假日)自动跳过
+
+# ---- 飞书推送 ----
+feishu:
+  # TODO: 填入飞书群机器人 webhook 完整 URL(形如 https://open.feishu.cn/open-apis/bot/v2/hook/xxxx)
+  # 留空则进入 dry-run,报告只打印到 stdout,不联网推送
+  webhook_url: ""
+  chunk_size: 18000                      # 单条消息字符上限(飞书 text 约 20KB,留余量;超长自动按行分片)
+
+# ---- 动态排行榜监控池(核心)----
+ranked_pool:
+  enabled: true                          # true = 动态排行榜池模式(默认);false = 回退旧固定 watchlist 模式
+  # 榜单口径列表:可增删/调整顺序,支持 成交额/涨幅(或涨跌幅)/换手率/量比/总市值
+  rank_by_list:
+    - 成交额                             # 成交额榜:按成交额降序,代表市场最活跃资金
+    - 涨幅                               # 涨幅榜:按涨跌幅降序,代表当日最强个股
+    - 换手率                             # 换手率榜:按换手率降序,代表交投活跃度
+    - 量比                               # 量比榜:按量比降序,代表放量程度
+    - 总市值                             # 总市值榜:按总市值降序,代表权重蓝筹
+  top_n: 20                              # 每榜前 N 名
+  max_pool_size: 100                     # 五榜并集去重后的监控池上限(超出按"命中榜数+成交额"截断)
+  alert_pct: 9.0                         # 异动阈值(%):|涨跌幅| >= 该值标记异动并附新闻
+  news_per_alert: 1                      # 每只异动股附最新新闻条数
+
+# ---- 监控企业清单 ----
+# 动态排行榜池模式下不再使用(监控对象由 ranked_pool 动态生成);仅 ranked_pool.enabled=false 时生效。
+watchlist: []
+
+# ---- 采集器开关 ----
+collectors:
+  # 动态排行榜池模式下,对池内每只股票执行以下五维深采集(全部启用;单维度异常隔离互不影响)
+  enabled: [quote, fundamental, news, research, sector]
+
+# ---- 异动告警 ----
+# 行情 |当日涨跌幅| 超阈值时在报告"行情"维度下追加高亮行;动态池模式下建议保持 false,
+# 池级异动由 ranked_pool.alert_pct 统一控制。
+alerts:
+  enabled: false                         # true = 行情 |当日涨跌幅| 超阈值时在报告中高亮
+  price_change_pct: 5.0                  # 涨跌幅阈值(%)
+
+# ---- 应用 ----
+app:
+  log_level: INFO                        # DEBUG / INFO / WARNING / ERROR
+  dry_run: true                          # true = 无 webhook 时打印到 stdout;填好 webhook 后建议改为 false

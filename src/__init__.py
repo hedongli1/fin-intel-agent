@@ -1,0 +1,1 @@
+# src 作为命名空间包(保证 `python -m src.fin_intel` 可执行)
