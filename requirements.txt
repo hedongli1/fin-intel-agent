@@ -2,6 +2,8 @@
 akshare>=1.14
 # pandas 3.x defaults to pyarrow string backend which triggers akshare's ArrowInvalid regex error, keep <3
 pandas>=2.1,<3.0
+# lxml required by akshare's 同花顺/巨潮 HTML 解析(bs4 FeatureNotFound 报错)
+lxml>=5.0
 APScheduler>=3.10
 PyYAML>=6.0
 pydantic>=2.6

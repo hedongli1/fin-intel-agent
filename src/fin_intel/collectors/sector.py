@@ -1,8 +1,9 @@
-"""行业/板块采集:
-1. ak.stock_board_industry_summary_ths 取同花顺行业板块涨跌幅榜 topN;
-2. 用 ak.stock_individual_basic_info_xq 的 affiliate_industry.ind_name(同花顺 BK 板块名)
-   回查目标股所属板块表现写入 summary。
-注:东财 stock_board_industry_name_em 在本环境不可达(push2 被远端断开),改走同花顺渠道。
+"""行业/板块采集,两级数据源:
+1. ak.stock_board_industry_summary_ths  同花顺行业板块涨跌幅榜 topN(板块/涨跌幅/总成交额/净流入/上涨家数/下跌家数/领涨股);
+2. ak.stock_sector_spot(indicator="新浪行业") 新浪行业板块(公司家数/平均价格/总成交量/总成交额/领涨股),补充展示;
+3. 板块归属:用同花顺行业榜中与目标股名称相近的领涨股回查板块,写入 summary(原雪球接口需 token 已废弃)。
+
+注:东财 stock_board_industry_name_em 在本环境不可达(push2 被远端断开),改走同花顺+新浪渠道。
 """
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ from typing import Any
 import akshare as ak
 
 from ..schema import CollectorResult
-from .base import BaseCollector, call_with_timeout, extract_record, symbol_with_market
+from .base import BaseCollector, call_with_timeout, extract_record
 
 
 def _num(v: Any) -> float | None:
@@ -25,49 +26,92 @@ class SectorCollector(BaseCollector):
     dimension = "sector"
 
     def _collect(self, code: str, name: str) -> CollectorResult:
-        fn_board = getattr(ak, "stock_board_industry_summary_ths", None)
-        df = call_with_timeout(fn_board, timeout=60)
-        if df is None or df.empty:
-            return CollectorResult(dimension=self.dimension, status="error", error="行业板块接口返回为空")
-
-        # 涨跌幅可能是带 % 的字符串,先数值化再排序
-        df["_pct"] = df["涨跌幅"].map(_num)
-        df = df.dropna(subset=["_pct"]).sort_values("_pct", ascending=False)
-
         items: list[dict] = []
-        for rec in df.head(self.top_n).to_dict("records"):
-            items.append(
-                extract_record(
-                    rec,
-                    {
-                        "板块": ["板块"],
-                        "涨跌幅": ["涨跌幅"],
-                        "领涨股": ["领涨股"],
-                    },
-                )
+        failures: list[str] = []
+
+        # 1) 同花顺行业板块涨幅榜
+        try:
+            fn_board = getattr(ak, "stock_board_industry_summary_ths", None)
+            df = call_with_timeout(fn_board, timeout=60)
+            if df is None or df.empty:
+                failures.append("同花顺行业榜返回为空")
+            else:
+                # 涨跌幅可能是带 % 的字符串,先数值化再排序
+                df["_pct"] = df["涨跌幅"].map(_num)
+                df = df.dropna(subset=["_pct"]).sort_values("_pct", ascending=False)
+                for rec in df.head(self.top_n).to_dict("records"):
+                    items.append(
+                        extract_record(
+                            rec,
+                            {
+                                "板块": ["板块"],
+                                "涨跌幅": ["涨跌幅"],
+                                "总成交额": ["总成交额"],
+                                "净流入": ["净流入"],
+                                "上涨家数": ["上涨家数"],
+                                "下跌家数": ["下跌家数"],
+                                "领涨股": ["领涨股"],
+                                "领涨股涨跌幅": ["领涨股-涨跌幅"],
+                            },
+                        )
+                    )
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"同花顺行业榜({type(exc).__name__}:{exc})")
+
+        # 2) 新浪行业板块(补充:公司家数/平均价格/总成交量)
+        try:
+            fn_sina = getattr(ak, "stock_sector_spot", None)
+            sdf = call_with_timeout(fn_sina, indicator="新浪行业", timeout=60)
+            if sdf is not None and not sdf.empty:
+                sdf["_pct"] = sdf["涨跌幅"].map(_num)
+                sdf = sdf.dropna(subset=["_pct"]).sort_values("_pct", ascending=False)
+                for rec in sdf.head(5).to_dict("records"):
+                    item = extract_record(
+                        rec,
+                        {
+                            "板块(新浪)": ["板块"],
+                            "公司家数": ["公司家数"],
+                            "平均价格": ["平均价格"],
+                            "涨跌幅": ["涨跌幅"],
+                            "总成交额": ["总成交额"],
+                            "领涨股": ["股票名称"],
+                        },
+                    )
+                    # 新浪总成交额单位为元,转亿元展示
+                    try:
+                        item["总成交额"] = f"{float(item['总成交额']) / 1e8:.2f} 亿元"
+                    except (TypeError, ValueError):
+                        pass
+                    items.append(item)
+            else:
+                failures.append("新浪行业榜返回为空")
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"新浪行业榜({type(exc).__name__}:{exc})")
+
+        if not items:
+            return CollectorResult(
+                dimension=self.dimension,
+                status="error",
+                error="; ".join(failures) or "行业板块数据源均无数据",
             )
 
-        # 目标股所属板块表现(雪球 affiliate_industry 与同花顺板块命名同源)
+        # 目标股所属板块表现:在同花顺行业榜中按领涨股名匹配目标股
         summary = ""
         try:
-            xq = getattr(ak, "stock_individual_basic_info_xq", None)
-            if xq is not None and "板块" in df.columns:
-                info_df = call_with_timeout(xq, symbol=symbol_with_market(code), timeout=60)
-                info = dict(zip(info_df["item"], info_df["value"]))
-                aff = info.get("affiliate_industry")
-                ind: str | None = None
-                if isinstance(aff, dict):
-                    ind = aff.get("ind_name")
-                elif isinstance(aff, str):
-                    ind = aff
-                if ind:
-                    matched = df[df["板块"] == ind]
-                    if not matched.empty:
-                        pct_v = _num(matched.iloc[0]["涨跌幅"])
-                        summary = f"所属板块 {ind} 涨跌幅 {pct_v}%(见涨幅榜)" if pct_v is not None else f"所属板块: {ind}"
-                    else:
-                        summary = f"所属板块: {ind}(未出现在上涨前列)"
+            matched = df[df["领涨股"].astype(str) == name]
+            if not matched.empty:
+                pct_v = _num(matched.iloc[0]["涨跌幅"])
+                summary = (
+                    f"目标股 {name} 是 {matched.iloc[0]['板块']} 板块领涨股,板块涨跌幅 "
+                    f"{pct_v}%"
+                    if pct_v is not None
+                    else f"目标股 {name} 是 {matched.iloc[0]['板块']} 板块领涨股"
+                )
+            else:
+                summary = f"{name} 未出现在行业涨幅榜领涨股中"
         except Exception as exc:  # noqa: BLE001 —— 板块归属仅锦上添花
             summary = f"板块归属检索失败: {type(exc).__name__}: {exc}"
 
+        if failures:
+            summary = (summary + " | " if summary else "") + f"部分来源失败: {'; '.join(failures)}"
         return CollectorResult(dimension=self.dimension, status="ok", items=items, summary=summary)

@@ -5,3 +5,9 @@ venv/
 .env
 *.log
 data/
+.vscode/
+e2e_out.txt
+e2e2_out.txt
+e2e3_out.txt
+test_out.txt
+probe_out.txt

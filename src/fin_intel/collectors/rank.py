@@ -1,6 +1,9 @@
 """动态排行榜监控池采集器(五榜并集去重)。
 
-数据源:ak.stock_zh_a_spot_em() 取东财全市场实时快照(含成交额/涨跌幅/换手率/量比/总市值)。
+数据源(按优先级):
+1. ak.stock_zh_a_spot_em()   东财全市场实时快照(含成交额/涨跌幅/换手率/量比/总市值);
+2. ak.stock_zh_a_spot_tx()   腾讯全市场实时快照(fallback,push2.eastmoney.com 不可达时自动降级,
+                             英文列名 code/name/zxj/zdf/turnover/hsl/lb/zsz/pe_ttm 等)。
 
 流程:
 1. 拉一次全A实时快照;
@@ -10,9 +13,7 @@
 4. 对池内 |涨跌幅| >= alert_pct 的异动股逐只调 ak.stock_news_em 取最新新闻(alerts);
    新闻接口缺失/失败时仅保留异动标记、跳过该股新闻,保证整体不崩溃。
 
-注:该接口是「实时榜单」唯一合理数据源(新浪日线无实时成交额/换手率/量比,做不了榜单),
-故本采集器不做降级;接口不可达/返回为空时返回 status=error 并给出明确中文提示
-(本地 Windows 下 push2.eastmoney.com 通常可达)。
+注:本采集器对快照做双源降级,任一源可用即继续;两源都不可达才返回 status=error。
 """
 from __future__ import annotations
 
@@ -50,6 +51,23 @@ _NEWS_MAPPING: dict[str, list[str]] = {
     "时间": ["发布时间", "时间"],
 }
 
+# 腾讯快照英文列名 -> 统一中文列名(与东财快照对齐,便于后续榜单处理)
+_TX_COLUMNS: dict[str, str] = {
+    "code": "代码",
+    "name": "名称",
+    "zxj": "最新价",
+    "zdf": "涨跌幅",
+    "turnover": "成交额",  # 万元
+    "hsl": "换手率",
+    "lb": "量比",
+    "zsz": "总市值",  # 亿元
+    "pe_ttm": "市盈率TTM",
+    "pn": "市净率",
+    "zf": "振幅",
+    "zd": "涨跌额",
+    "ltsz": "流通市值",
+}
+
 
 def _num(v: Any) -> float:
     """把 akshare 返回的数值(可能带 % / 逗号 / NaN)安全转 float,失败或 NaN 返回 0.0。"""
@@ -63,6 +81,59 @@ def _num(v: Any) -> float:
     if f != f or f in (float("inf"), float("-inf")):  # NaN / inf
         return 0.0
     return f
+
+
+def _snapshot_em() -> pd.DataFrame:
+    """东财全A实时快照(中文列名,成交额/总市值为元)。"""
+    fn = getattr(ak, "stock_zh_a_spot_em", None)
+    if fn is None:
+        raise RuntimeError("akshare 缺少 stock_zh_a_spot_em 接口")
+    df = call_with_timeout(fn, timeout=90)
+    if df is None or df.empty:
+        raise RuntimeError("东财全A实时快照返回为空")
+    return df
+
+
+def _snapshot_tx() -> pd.DataFrame:
+    """腾讯全A实时快照(英文列名) -> 统一中文列名。
+
+    单位换算:成交额 万元->元,总市值 亿元->元,以便与东财快照同一套榜单/展示逻辑。
+    """
+    fn = getattr(ak, "stock_zh_a_spot_tx", None)
+    if fn is None:
+        raise RuntimeError("akshare 缺少 stock_zh_a_spot_tx 接口")
+    df = call_with_timeout(fn, timeout=90)
+    if df is None or df.empty:
+        raise RuntimeError("腾讯全A实时快照返回为空")
+
+    df = df.rename(columns=_TX_COLUMNS)
+    keep = [c for c in ("代码", "名称", "最新价", "涨跌幅", "成交额", "换手率", "量比", "总市值") if c in df.columns]
+    df = df[keep].copy()
+    # 代码去市场前缀(东财格式为纯 6 位)
+    df["代码"] = df["代码"].astype(str).str.replace(r"^(sh|sz|bj)", "", regex=True)
+    # 单位换算:成交额 万元 -> 元;总市值 亿元 -> 元
+    if "成交额" in df.columns:
+        df["成交额"] = pd.to_numeric(df["成交额"], errors="coerce") * 1e4
+    if "总市值" in df.columns:
+        df["总市值"] = pd.to_numeric(df["总市值"], errors="coerce") * 1e8
+    return df
+
+
+def _load_snapshot() -> tuple[pd.DataFrame, str]:
+    """按优先级加载全A快照,返回 (df, 来源名);两源都失败时抛异常。"""
+    errors: list[str] = []
+    for name, loader in (("东财", _snapshot_em), ("腾讯", _snapshot_tx)):
+        try:
+            df = loader()
+            required = {"代码", "名称", "最新价", "涨跌幅", "成交额", "换手率", "量比", "总市值"}
+            missing = required - set(df.columns)
+            if missing:
+                errors.append(f"{name}快照缺少列 {sorted(missing)}")
+                continue
+            return df, name
+        except Exception as exc:  # noqa: BLE001 —— 逐个源尝试
+            errors.append(f"{name}快照({type(exc).__name__}:{exc})")
+    raise RuntimeError("; ".join(errors) or "全A实时快照不可用")
 
 
 class RankedPoolCollector(BaseCollector):
@@ -106,43 +177,18 @@ class RankedPoolCollector(BaseCollector):
         return out
 
     def _collect(self, code: str = "", name: str = "") -> CollectorResult:
-        fn = getattr(ak, "stock_zh_a_spot_em", None)
-        if fn is None:
-            return CollectorResult(
-                dimension=self.dimension,
-                status="error",
-                error="akshare 缺少 stock_zh_a_spot_em 接口(可能版本过旧或接口改名),请升级 akshare。",
-            )
-
         try:
-            df = call_with_timeout(fn, timeout=90)
+            work, source = _load_snapshot()
         except Exception as exc:  # noqa: BLE001
             return CollectorResult(
                 dimension=self.dimension,
                 status="error",
                 error=(
-                    f"东财全A实时快照接口调用失败({type(exc).__name__}): {exc}。"
-                    "请检查网络连通性 / 升级 akshare 版本;本地 Windows 下 push2.eastmoney.com 通常可达。"
+                    f"全A实时快照不可用({type(exc).__name__}: {exc})。"
+                    "已尝试东财(push2.eastmoney.com)与腾讯(proxy.finance.qq.com)两个渠道。"
                 ),
             )
 
-        if df is None or df.empty:
-            return CollectorResult(
-                dimension=self.dimension,
-                status="error",
-                error="东财全A实时快照返回为空(push2.eastmoney.com 可能被远端断开,本地 Windows 通常正常)。",
-            )
-
-        required = {"代码", "名称", "最新价", "涨跌幅", "成交额", "换手率", "量比", "总市值"}
-        missing = required - set(df.columns)
-        if missing:
-            return CollectorResult(
-                dimension=self.dimension,
-                status="error",
-                error=f"快照缺少必要列: {sorted(missing)},实际列: {list(df.columns)}",
-            )
-
-        work = df.copy()
         for col in ("成交额", "涨跌幅", "换手率", "量比", "总市值"):
             work[col] = pd.to_numeric(work[col], errors="coerce").fillna(0.0)
 
@@ -197,8 +243,8 @@ class RankedPoolCollector(BaseCollector):
                 alerts.append({"代码": code_, "名称": p.get("名称", ""), "涨跌幅": pct, "新闻": news})
 
         summary = (
-            f"{len(self.rank_by_list)} 榜各取前 {self.top_n} 名,并集去重后 {len(pool)} 只"
-            f"(上限 {self.max_pool_size});异动(|涨跌幅|≥{self.alert_pct:g}%) {len(alerts)} 只"
+            f"[数据源:{source}] {len(self.rank_by_list)} 榜各取前 {self.top_n} 名,并集去重后 "
+            f"{len(pool)} 只(上限 {self.max_pool_size});异动(|涨跌幅|≥{self.alert_pct:g}%) {len(alerts)} 只"
         )
         return CollectorResult(
             dimension=self.dimension,

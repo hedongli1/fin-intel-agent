@@ -221,6 +221,6 @@ def aggregate_pool(
             lines.append("---")
 
     lines.append(f"生成时间: {generated_at}")
-    lines.append("数据来源: akshare(榜单为东财全A实时快照 stock_zh_a_spot_em;五维数据聚合自东方财富/巨潮/同花顺/新浪/财联社等公开接口)")
+    lines.append("数据来源: akshare(榜单为东财/腾讯全A实时快照;五维数据聚合自东方财富/巨潮/同花顺/新浪/财联社等公开接口)")
     lines.append("免责声明: 本报告仅供研究参考,不构成任何投资建议。数据可能存在延迟或误差,请以官方披露为准。")
     return "\n".join(lines)
