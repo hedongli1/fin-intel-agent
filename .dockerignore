@@ -1,0 +1,28 @@
+# Git / VCS
+.git/
+.gitignore
+.dockerignore
+
+# 虚拟环境与缓存
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# 运行时数据与日志(镜像内不打包,运行期挂载卷)
+data/
+*.log
+e2e_out.txt
+e2e2_out.txt
+e2e3_out.txt
+test_out.txt
+probe_out.txt
+
+# 本地敏感配置(镜像内不打包;运行时用 -v 挂载 .env / config.yaml)
+.env
+.env.example
+
+# IDE 与本地文件
+.vscode/
+.idea/

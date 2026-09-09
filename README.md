@@ -91,11 +91,27 @@ fin-intel-agent/
 ## Docker 部署
 
 ```bash
+# 构建(自动排除 .venv/.git/data/.env,镜像体积小且不含敏感配置)
 docker build -t fin-intel-agent .
+
+# 常驻调度模式:挂载配置与 .env 后运行(默认按 config.yaml 的 cron 定时执行)
 docker run -d --name fin-intel-agent \
   -v "$(pwd)/config/config.yaml:/app/config/config.yaml" \
+  -v "$(pwd)/.env:/app/.env" \
   fin-intel-agent
+
+# 立即跑一轮验证(不挂 webhook 时为 dry-run,报告打印到 stdout)
+docker run --rm \
+  -v "$(pwd)/config/config.yaml:/app/config/config.yaml" \
+  fin-intel-agent python3 -m src.fin_intel --once --dry-run
+
+# 查看日志 / 停止
+docker logs -f fin-intel-agent
+docker stop fin-intel-agent
 ```
+
+> **提示**：`config/config.yaml` 的 `feishu.webhook_url` 留空时为 dry-run(仅打印)。
+> 若要推送飞书,在 `.env` 填 `FEISHU_WEBHOOK_URL=...` 并同时挂载 `.env`,或将 webhook 直接写入挂载的 config.yaml。
 
 ## 数据来源与免责声明
 
