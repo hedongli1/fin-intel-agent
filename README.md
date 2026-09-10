@@ -90,22 +90,40 @@ fin-intel-agent/
 
 ## Docker 部署
 
+### 前置环境(下载链接)
+
+| 组件 | 用途 | 下载 |
+|------|------|------|
+| **Docker Desktop** | 构建/运行镜像(推荐) | https://www.docker.com/products/docker-desktop/ |
+| **Rancher Desktop**(可选) | Docker Desktop 免费替代(商用场景) | https://rancherdesktop.io/ |
+| **Podman Desktop**(可选) | 免守护进程的容器方案 | https://podman-desktop.io/ |
+| **Git** | 克隆仓库(未装时) | https://git-scm.com/download/win |
+| **Python** | 本地直接运行(不走 Docker 时) | https://www.python.org/downloads/ |
+
+> **Windows 提示**：Docker Desktop 依赖 WSL2 后端,首次安装会引导启用;系统需 Win10 64 位及以上。
+
+### 构建与运行
+
 ```bash
-# 构建(自动排除 .venv/.git/data/.env,镜像体积小且不含敏感配置)
+# 1. 克隆项目
+git clone https://github.com/hedongli1/fin-intel-agent.git
+cd fin-intel-agent
+
+# 2. 构建镜像(自动排除 .venv/.git/data/.env,体积小且不含敏感配置;国内走清华源加速)
 docker build -t fin-intel-agent .
 
-# 常驻调度模式:挂载配置与 .env 后运行(默认按 config.yaml 的 cron 定时执行)
+# 3. 常驻调度模式:挂载配置与 .env 后运行(默认按 config.yaml 的 cron 定时执行)
 docker run -d --name fin-intel-agent \
   -v "$(pwd)/config/config.yaml:/app/config/config.yaml" \
   -v "$(pwd)/.env:/app/.env" \
   fin-intel-agent
 
-# 立即跑一轮验证(不挂 webhook 时为 dry-run,报告打印到 stdout)
+# 4. 立即跑一轮验证(不挂 webhook 时为 dry-run,报告打印到 stdout)
 docker run --rm \
   -v "$(pwd)/config/config.yaml:/app/config/config.yaml" \
   fin-intel-agent python3 -m src.fin_intel --once --dry-run
 
-# 查看日志 / 停止
+# 5. 查看日志 / 停止
 docker logs -f fin-intel-agent
 docker stop fin-intel-agent
 ```
