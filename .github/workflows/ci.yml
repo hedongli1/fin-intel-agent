@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Python 语法与结构检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 语法编译检查（不联网、零第三方依赖）
+        run: python -m compileall -q src
+      - name: 依赖清单可解析校验
+        run: python -c "import pathlib,sys; p=pathlib.Path('requirements.txt'); assert p.exists() and p.read_text(encoding='utf-8').strip(), 'requirements.txt 为空'"
